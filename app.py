@@ -150,34 +150,6 @@ def create_default_table(subjects, grade, n=3):
     return pd.DataFrame(rows)
 
 
-def save_editor_changes():
-    """
-    This function saves changes immediately from st.data_editor.
-    It fixes the problem where first-time typed marks disappear.
-    """
-    if "student_editor_table" not in st.session_state:
-        return
-
-    editor_state = st.session_state["student_editor_table"]
-
-    if not isinstance(editor_state, dict):
-        return
-
-    current_df = st.session_state.students_df.copy()
-
-    edited_rows = editor_state.get("edited_rows", {})
-
-    for row_index, changes in edited_rows.items():
-        row_index = int(row_index)
-
-        if row_index < len(current_df):
-            for column_name, new_value in changes.items():
-                if column_name in current_df.columns:
-                    current_df.at[row_index, column_name] = new_value
-
-    st.session_state.students_df = current_df
-
-
 # ============================================================
 # TITLE
 # ============================================================
@@ -210,7 +182,6 @@ term = st.sidebar.selectbox(
 class_teacher = st.sidebar.text_input("Class Teacher", value="Teacher Name")
 
 record_date = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-
 st.sidebar.info(f"📅 Date Recorded: {record_date}")
 
 # ============================================================
@@ -265,8 +236,6 @@ if st.session_state.last_grade != grade:
 # ============================================================
 
 if st.button("🔄 Apply / Update Subject Columns"):
-    save_editor_changes()
-
     old_df = st.session_state.students_df.copy()
 
     if "Student ID" not in old_df.columns:
@@ -302,8 +271,6 @@ col_add, col_note = st.columns([1, 3])
 
 with col_add:
     if st.button("➕ Add New Student"):
-        save_editor_changes()
-
         current_df = st.session_state.students_df.copy()
         new_id = get_next_student_id(current_df, grade)
 
@@ -345,16 +312,17 @@ for subject in subjects:
         step=1
     )
 
-st.data_editor(
+edited_df = st.data_editor(
     st.session_state.students_df,
     num_rows="fixed",
     use_container_width=True,
     column_config=column_config,
-    key="student_editor_table",
-    on_change=save_editor_changes
+    key="student_editor_table"
 )
 
-df = st.session_state.students_df.copy()
+# IMPORTANT: use the live edited table immediately
+st.session_state.students_df = edited_df.copy()
+df = edited_df.copy()
 
 # ============================================================
 # CLEAN AND CALCULATE RESULTS
