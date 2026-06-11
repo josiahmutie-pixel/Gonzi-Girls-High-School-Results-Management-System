@@ -314,10 +314,11 @@ edited_df = st.data_editor(
     num_rows="fixed",
     use_container_width=True,
     column_config=column_config,
-    key="student_editor"
+    key="student_editor_table"
 )
 
-st.session_state.students_df = edited_df.copy()
+if not edited_df.equals(st.session_state.students_df):
+    st.session_state.students_df = edited_df.copy()
 
 # ============================================================
 # CLEAN AND CALCULATE RESULTS
