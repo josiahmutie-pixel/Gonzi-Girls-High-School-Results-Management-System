@@ -4,6 +4,7 @@ import plotly.express as px
 from datetime import datetime
 from io import BytesIO, StringIO
 import os
+import re
 
 # ============================================================
 # PAGE CONFIG
@@ -85,6 +86,68 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def system_notice(code, message, notice_type="error"):
+    text = f"⚠️ System Notice [{code}]: {message}"
+    if notice_type == "error":
+        st.error(text)
+    elif notice_type == "warning":
+        st.warning(text)
+    else:
+        st.info(text)
+
+
+def clean_filename(name):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", name)
+
+
+def grade_code(grade):
+    return grade.replace("Grade ", "G")
+
+
+def get_next_student_id(df, grade):
+    prefix = f"GGHS-{grade_code(grade)}-"
+    numbers = []
+
+    if "Student ID" in df.columns:
+        for sid in df["Student ID"].astype(str):
+            sid = sid.strip()
+            if sid.startswith(prefix):
+                try:
+                    numbers.append(int(sid.split("-")[-1]))
+                except ValueError:
+                    pass
+
+    next_number = max(numbers) + 1 if numbers else 1
+    return f"{prefix}{next_number:03d}"
+
+
+def create_default_table(subjects, grade, n=3):
+    rows = []
+    for i in range(1, n + 1):
+        row = {
+            "Student ID": f"GGHS-{grade_code(grade)}-{i:03d}",
+            "Student Name": f"Student {i}"
+        }
+        for subject in subjects:
+            row[subject] = 0
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def prepare_subjects(subjects_text):
+    subjects = []
+    for subject in subjects_text.split(","):
+        subject = subject.strip()
+        if subject and subject not in subjects:
+            subjects.append(subject)
+    return subjects
+
+
+# ============================================================
 # TITLE
 # ============================================================
 
@@ -143,35 +206,40 @@ subjects_text = st.text_area(
     height=100
 )
 
-subjects = []
-for s in subjects_text.split(","):
-    s = s.strip()
-    if s and s not in subjects:
-        subjects.append(s)
+subjects = prepare_subjects(subjects_text)
 
-st.success(f"Current Subjects: {', '.join(subjects)}")
+if len(subjects) == 0:
+    system_notice("SUB-101", "At least one subject is required.", "error")
+else:
+    st.success(f"Current Subjects: {', '.join(subjects)}")
 
 # ============================================================
-# DEFAULT TABLE
+# SESSION STATE TABLE
 # ============================================================
-
-def create_default_table(subjects):
-    data = {
-        "Student ID": ["GGHS-001", "GGHS-002", "GGHS-003"],
-        "Student Name": ["Student One", "Student Two", "Student Three"]
-    }
-
-    for subject in subjects:
-        data[subject] = [0, 0, 0]
-
-    return pd.DataFrame(data)
-
 
 if "students_df" not in st.session_state:
-    st.session_state.students_df = create_default_table(subjects)
+    st.session_state.students_df = create_default_table(subjects, grade)
+
+if "last_grade" not in st.session_state:
+    st.session_state.last_grade = grade
+
+if st.session_state.last_grade != grade:
+    st.session_state.students_df = create_default_table(subjects, grade)
+    st.session_state.last_grade = grade
+    st.rerun()
+
+# ============================================================
+# SUBJECT UPDATE
+# ============================================================
 
 if st.button("🔄 Apply / Update Subject Columns"):
     old_df = st.session_state.students_df.copy()
+
+    if "Student ID" not in old_df.columns:
+        old_df["Student ID"] = ""
+
+    if "Student Name" not in old_df.columns:
+        old_df["Student Name"] = ""
 
     new_df = old_df[["Student ID", "Student Name"]].copy()
 
@@ -183,6 +251,7 @@ if st.button("🔄 Apply / Update Subject Columns"):
 
     st.session_state.students_df = new_df
     st.success("Subject columns updated successfully.")
+    st.rerun()
 
 # ============================================================
 # STUDENT MARKS ENTRY
@@ -191,22 +260,76 @@ if st.button("🔄 Apply / Update Subject Columns"):
 st.markdown("## 📝 Student Marks Entry Dashboard")
 
 st.warning(
-    "Edit student IDs, names, marks, add rows, or delete wrong rows directly in the table. "
-    "Student ID must be unique. Similar student names are allowed."
+    "Edit names and marks in the table. Student IDs are unique primary keys. "
+    "Similar student names are allowed if the Student IDs are different."
 )
+
+col_add, col_note = st.columns([1, 3])
+
+with col_add:
+    if st.button("➕ Add New Student"):
+        current_df = st.session_state.students_df.copy()
+        new_id = get_next_student_id(current_df, grade)
+
+        new_row = {
+            "Student ID": new_id,
+            "Student Name": ""
+        }
+
+        for subject in subjects:
+            new_row[subject] = 0
+
+        st.session_state.students_df = pd.concat(
+            [current_df, pd.DataFrame([new_row])],
+            ignore_index=True
+        )
+
+        st.rerun()
+
+with col_note:
+    st.info("Use the button to add a new row with the next automatic Student ID.")
+
+column_config = {
+    "Student ID": st.column_config.TextColumn(
+        "Student ID",
+        help="Unique student primary key",
+        disabled=True
+    ),
+    "Student Name": st.column_config.TextColumn(
+        "Student Name",
+        help="Enter full student name"
+    )
+}
+
+for subject in subjects:
+    column_config[subject] = st.column_config.NumberColumn(
+        subject,
+        min_value=0,
+        max_value=100,
+        step=1
+    )
 
 edited_df = st.data_editor(
     st.session_state.students_df,
-    num_rows="dynamic",
+    num_rows="fixed",
     use_container_width=True,
+    column_config=column_config,
     key="student_editor"
 )
 
+st.session_state.students_df = edited_df.copy()
+
 # ============================================================
-# CLEAN AND CALCULATE
+# CLEAN AND CALCULATE RESULTS
 # ============================================================
 
 df = edited_df.copy()
+
+required_columns = ["Student ID", "Student Name"]
+
+for col in required_columns:
+    if col not in df.columns:
+        df[col] = ""
 
 df["Student ID"] = df["Student ID"].astype(str).str.strip()
 df["Student Name"] = df["Student Name"].astype(str).str.strip()
@@ -216,16 +339,23 @@ df = df[(df["Student ID"] != "") & (df["Student Name"] != "")]
 for subject in subjects:
     if subject in df.columns:
         df[subject] = pd.to_numeric(df[subject], errors="coerce").fillna(0)
+        df[subject] = df[subject].clip(lower=0, upper=100)
+    else:
+        df[subject] = 0
 
-duplicate_ids = df[df["Student ID"].duplicated(keep=False)]["Student ID"].unique()
+duplicate_ids = (
+    df[df["Student ID"].duplicated(keep=False)]["Student ID"]
+    .astype(str)
+    .unique()
+)
 
 has_duplicate_ids = len(duplicate_ids) > 0
 
 if has_duplicate_ids:
-    st.error(
-        "⚠️ Duplicate Student IDs detected: "
-        + ", ".join(duplicate_ids)
-        + ". Please correct them before downloading or saving."
+    system_notice(
+        "ID-409",
+        "Repeated Student IDs found. Please correct them before saving or downloading.",
+        "error"
     )
 
 if len(subjects) > 0:
@@ -235,8 +365,11 @@ else:
     df["Total"] = 0
     df["Mean Score"] = 0
 
-df["Position"] = df["Total"].rank(method="min", ascending=False).astype(int)
-df = df.sort_values(by=["Position", "Student Name"]).reset_index(drop=True)
+if not df.empty:
+    df["Position"] = df["Total"].rank(method="min", ascending=False).astype(int)
+    df = df.sort_values(by=["Position", "Student Name"]).reset_index(drop=True)
+else:
+    df["Position"] = []
 
 # ============================================================
 # CLASS SUMMARY
@@ -296,18 +429,25 @@ st.dataframe(df, use_container_width=True)
 
 st.markdown("## 📘 Subject Performance Analysis")
 
-subject_analysis = pd.DataFrame({
-    "Subject": subjects,
-    "Grand Total": [df[sub].sum() for sub in subjects],
-    "Mean Score": [round(df[sub].mean(), 2) for sub in subjects]
-})
+if total_students > 0 and len(subjects) > 0:
+    subject_analysis = pd.DataFrame({
+        "Subject": subjects,
+        "Grand Total": [df[sub].sum() for sub in subjects],
+        "Mean Score": [round(df[sub].mean(), 2) for sub in subjects]
+    })
 
-subject_analysis["Subject Rank"] = subject_analysis["Mean Score"].rank(
-    method="min",
-    ascending=False
-).astype(int)
+    subject_analysis["Subject Rank"] = subject_analysis["Mean Score"].rank(
+        method="min",
+        ascending=False
+    ).astype(int)
 
-subject_analysis = subject_analysis.sort_values(by="Subject Rank").reset_index(drop=True)
+    subject_analysis = subject_analysis.sort_values(
+        by="Subject Rank"
+    ).reset_index(drop=True)
+else:
+    subject_analysis = pd.DataFrame(
+        columns=["Subject", "Grand Total", "Mean Score", "Subject Rank"]
+    )
 
 st.dataframe(subject_analysis, use_container_width=True)
 
@@ -335,7 +475,7 @@ if not df.empty:
         x="Student Name",
         y="Total",
         text="Position",
-        title="Student Total Marks and Positions"
+        title="Student Total Marks and Class Positions"
     )
     fig_students.update_traces(textposition="outside")
     fig_students.update_layout(xaxis_tickangle=-45)
@@ -374,9 +514,7 @@ def create_excel_file(df, subject_analysis):
             "border": 1
         })
 
-        value_format = workbook.add_format({
-            "border": 1
-        })
+        value_format = workbook.add_format({"border": 1})
 
         header_format = workbook.add_format({
             "bold": True,
@@ -412,7 +550,7 @@ def create_excel_file(df, subject_analysis):
             "bg_color": "#FFF2CC"
         })
 
-        # ---------------- Student Results Sheet ----------------
+        # Student Results Sheet
         sheet_name = "Student Results"
         worksheet = workbook.add_worksheet(sheet_name)
         writer.sheets[sheet_name] = worksheet
@@ -453,11 +591,11 @@ def create_excel_file(df, subject_analysis):
         worksheet.freeze_panes(start_row + 1, 2)
         worksheet.autofilter(start_row, 0, start_row + len(df), len(df.columns) - 1)
 
-        worksheet.set_column(0, 0, 16)
+        worksheet.set_column(0, 0, 18)
         worksheet.set_column(1, 1, 25)
         worksheet.set_column(2, len(df.columns) - 1, 15)
 
-        # ---------------- Subject Analysis Sheet ----------------
+        # Subject Analysis Sheet
         sheet2 = "Subject Analysis"
         worksheet2 = workbook.add_worksheet(sheet2)
         writer.sheets[sheet2] = worksheet2
@@ -469,6 +607,10 @@ def create_excel_file(df, subject_analysis):
         worksheet2.write(3, 1, exam_type, value_format)
         worksheet2.write(3, 2, "Grade:", label_format)
         worksheet2.write(3, 3, grade, value_format)
+        worksheet2.write(4, 0, "Term:", label_format)
+        worksheet2.write(4, 1, term, value_format)
+        worksheet2.write(4, 2, "Date Recorded:", label_format)
+        worksheet2.write(4, 3, record_date, value_format)
 
         start_row2 = 6
 
@@ -487,26 +629,27 @@ def create_excel_file(df, subject_analysis):
         worksheet2.set_column(0, 0, 25)
         worksheet2.set_column(1, 3, 18)
 
-        chart = workbook.add_chart({"type": "column"})
-        chart.add_series({
-            "name": "Mean Score",
-            "categories": [sheet2, start_row2 + 1, 0, start_row2 + len(subject_analysis), 0],
-            "values": [sheet2, start_row2 + 1, 2, start_row2 + len(subject_analysis), 2],
-            "data_labels": {"value": True}
-        })
-        chart.set_title({"name": "Subject Mean Score Performance"})
-        chart.set_x_axis({"name": "Subjects"})
-        chart.set_y_axis({"name": "Mean Score"})
-        chart.set_style(10)
+        if not subject_analysis.empty:
+            chart = workbook.add_chart({"type": "column"})
+            chart.add_series({
+                "name": "Mean Score",
+                "categories": [sheet2, start_row2 + 1, 0, start_row2 + len(subject_analysis), 0],
+                "values": [sheet2, start_row2 + 1, 2, start_row2 + len(subject_analysis), 2],
+                "data_labels": {"value": True}
+            })
+            chart.set_title({"name": "Subject Mean Score Performance"})
+            chart.set_x_axis({"name": "Subjects"})
+            chart.set_y_axis({"name": "Mean Score"})
+            chart.set_style(10)
 
-        worksheet2.insert_chart("F3", chart, {"x_scale": 1.6, "y_scale": 1.4})
+            worksheet2.insert_chart("F3", chart, {"x_scale": 1.6, "y_scale": 1.4})
 
     output.seek(0)
     return output
 
 
 # ============================================================
-# CSV CREATOR WITH TITLE + SUBJECT ANALYSIS
+# CSV CREATOR
 # ============================================================
 
 def create_full_csv(df, subject_analysis):
@@ -524,8 +667,7 @@ def create_full_csv(df, subject_analysis):
     output.write("STUDENT RESULTS\n")
     df.to_csv(output, index=False)
 
-    output.write("\n")
-    output.write("SUBJECT PERFORMANCE ANALYSIS\n")
+    output.write("\nSUBJECT PERFORMANCE ANALYSIS\n")
     subject_analysis.to_csv(output, index=False)
 
     return output.getvalue()
@@ -534,7 +676,7 @@ def create_full_csv(df, subject_analysis):
 excel_file = create_excel_file(df, subject_analysis)
 csv_file = create_full_csv(df, subject_analysis)
 
-file_base_name = f"{grade}_{term}_{exam_type}_Results".replace(" ", "_").replace("/", "_")
+file_base_name = clean_filename(f"{grade}_{term}_{exam_type}_Results")
 excel_filename = f"{file_base_name}.xlsx"
 csv_filename = f"{file_base_name}.csv"
 
@@ -545,7 +687,11 @@ csv_filename = f"{file_base_name}.csv"
 st.markdown("## 📥 Download Results Sheet")
 
 if has_duplicate_ids:
-    st.warning("Fix duplicate Student IDs before downloading or saving.")
+    system_notice(
+        "SAVE-409",
+        "Download and saving are locked until repeated Student IDs are corrected.",
+        "warning"
+    )
 else:
     st.download_button(
         label="📥 Download Decorated Excel Results Sheet",
@@ -585,7 +731,6 @@ if len(saved_files) == 0:
     st.info("No saved reports yet.")
 else:
     selected_file = st.selectbox("Select saved file", saved_files)
-
     selected_path = os.path.join(SAVE_FOLDER, selected_file)
 
     with open(selected_path, "rb") as f:
