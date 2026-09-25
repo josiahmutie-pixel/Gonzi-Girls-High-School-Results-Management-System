@@ -6,3 +6,10 @@ pandas
 openpyxl
 xlsxwriter
 plotly
+streamlit
+pandas
+plotly
+xlsxwriter
+reportlab
+requests
+pillow
