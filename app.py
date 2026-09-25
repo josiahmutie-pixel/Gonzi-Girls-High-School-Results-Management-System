@@ -6,6 +6,7 @@ from io import BytesIO, StringIO
 import os
 import re
 import requests
+import zipfile
 from PIL import Image
 
 # PDF Generation Imports (ReportLab)
@@ -16,7 +17,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 
 # ============================================================
-# PAGE CONFIG
+# PAGE CONFIGURATION & STYLING
 # ============================================================
 
 st.set_page_config(
@@ -25,8 +26,8 @@ st.set_page_config(
     layout="wide"
 )
 
-SAVE_FOLDER = "saved_reports"
-os.makedirs(SAVE_FOLDER, exist_ok=True)
+BASE_SAVE_FOLDER = "saved_reports"
+os.makedirs(BASE_SAVE_FOLDER, exist_ok=True)
 
 LOGO_URL = "https://drive.google.com/uc?export=download&id=1pDGlnQdyBCJksvBuAbbhXi-b-QiStk7s"
 LOCAL_LOGO_PATH = "school_logo.png"
@@ -57,78 +58,103 @@ DEFAULT_SUBJECT_MAP = {
     "Grade 12": ["English", "Kiswahili", "Mathematics", "Biology", "Chemistry", "Physics", "Business", "Agriculture"]
 }
 
-# ============================================================
-# CSS DESIGN
-# ============================================================
-
+# Advanced UI CSS
 st.markdown("""
 <style>
 .main {
-    background-color: #f5f7fb;
+    background-color: #f8fafc;
 }
 
 .school-header-container {
-    background: linear-gradient(90deg, #002147, #004080);
-    padding: 20px;
-    border-radius: 15px;
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #0284c7 100%);
+    padding: 24px;
+    border-radius: 16px;
     text-align: center;
     color: white;
-    margin-bottom: 20px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+    margin-bottom: 25px;
 }
 
 .school-title {
-    font-size: 34px;
-    font-weight: bold;
-    letter-spacing: 1px;
-    margin-top: 10px;
+    font-size: 36px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    margin-top: 8px;
+    text-transform: uppercase;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
 
 .subtitle {
-    color: #ffd700;
-    font-size: 18px;
+    color: #fbbf24;
+    font-size: 19px;
+    font-weight: 600;
     margin-top: 4px;
+    letter-spacing: 0.5px;
 }
 
 .metric-card {
-    background: linear-gradient(135deg, #ffffff, #eaf2ff);
-    padding: 18px;
-    border-radius: 14px;
+    background: #ffffff;
+    padding: 20px;
+    border-radius: 16px;
     text-align: center;
-    border-left: 6px solid #004080;
-    box-shadow: 0px 2px 8px rgba(0,0,0,0.08);
+    border-top: 4px solid #0284c7;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    transition: transform 0.2s ease-in-out;
+}
+
+.metric-card:hover {
+    transform: translateY(-3px);
 }
 
 .metric-title {
-    font-size: 15px;
-    color: #555;
+    font-size: 14px;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .metric-value {
-    font-size: 26px;
-    color: #002147;
-    font-weight: bold;
+    font-size: 28px;
+    color: #0f172a;
+    font-weight: 800;
+    margin-top: 6px;
 }
 
 .stButton>button {
-    background-color: #004080;
+    background: linear-gradient(90deg, #1e3a8a, #0284c7);
     color: white;
+    border: none;
     border-radius: 10px;
-    height: 45px;
-    font-weight: bold;
+    height: 46px;
+    font-weight: 600;
+    box-shadow: 0 4px 10px rgba(2, 132, 199, 0.3);
+    transition: all 0.2s ease;
+}
+
+.stButton>button:hover {
+    background: linear-gradient(90deg, #0284c7, #1e3a8a);
+    box-shadow: 0 6px 15px rgba(2, 132, 199, 0.4);
 }
 
 .stDownloadButton>button {
-    background-color: #006400;
+    background: linear-gradient(90deg, #15803d, #22c55e);
     color: white;
+    border: none;
     border-radius: 10px;
-    height: 45px;
-    font-weight: bold;
+    height: 46px;
+    font-weight: 600;
+    box-shadow: 0 4px 10px rgba(34, 197, 94, 0.3);
+}
+
+.stDownloadButton>button:hover {
+    background: linear-gradient(90deg, #166534, #15803d);
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ============================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS & EXPORT ENGINES
 # ============================================================
 
 def system_notice(code, message, notice_type="error"):
@@ -210,39 +236,21 @@ def generate_result_slip_pdf(student_row, subjects, grade_name, exam_type, term,
 
     styles = getSampleStyleSheet()
     
-    # Custom Styles (Blue Pen Effect: #0000AA)
     blue_style = ParagraphStyle('BlueText', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, textColor=colors.HexColor('#0000AA'))
     black_bold = ParagraphStyle('BlackBold', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, textColor=colors.black)
     title_style = ParagraphStyle('TitleStyle', fontName='Helvetica-Bold', fontSize=14, alignment=1, textColor=colors.HexColor('#002147'))
     subtitle_style = ParagraphStyle('SubTitleStyle', fontName='Helvetica-Bold', fontSize=11, alignment=1, textColor=colors.HexColor('#002147'))
 
-    # Top Logo
     if logo_path and os.path.exists(logo_path):
         img = RLImage(logo_path, width=1.1*inch, height=1.2*inch)
         img.hAlign = 'CENTER'
         story.append(img)
         story.append(Spacer(1, 6))
 
-    # School Header
     story.append(Paragraph("GONZI GIRLS SECONDARY SCHOOL", title_style))
     story.append(Paragraph(f"{grade_name.upper()} RESULT SLIP", subtitle_style))
     story.append(Spacer(1, 10))
 
-    # Student Info Table
-    info_data = [
-        [
-            Paragraph("Name: ________________________", black_bold),
-            Paragraph("Adm No: ________________", black_bold),
-            Paragraph("Stream: ____________", black_bold)
-        ],
-        [
-            Paragraph("Exam: ________________________", black_bold),
-            Paragraph("Year: ________________", black_bold),
-            Paragraph("Class Teacher: ________________", black_bold)
-        ]
-    ]
-
-    # Pre-fill Blue Values into blank positions
     info_data_filled = [
         [
             Paragraph(f"Name: <font color='#0000AA'><u><b>{student_row['Student Name']}</b></u></font>", black_bold),
@@ -264,7 +272,6 @@ def generate_result_slip_pdf(student_row, subjects, grade_name, exam_type, term,
     story.append(info_table)
     story.append(Spacer(1, 10))
 
-    # Subjects & Marks Table
     table_data = [["Subject", "Marks", "Grade", "Teacher Initials", "Comment"]]
     
     for sub in subjects:
@@ -274,8 +281,8 @@ def generate_result_slip_pdf(student_row, subjects, grade_name, exam_type, term,
             sub,
             Paragraph(f"<font color='#0000AA'><b>{mark}</b></font>", blue_style),
             Paragraph(f"<font color='#0000AA'><b>{g}</b></font>", blue_style),
-            "", # Left blank for manual teacher initial
-            ""  # Left blank for manual comment
+            "",
+            ""
         ])
 
     subject_table = Table(table_data, colWidths=[2.2*inch, 1.0*inch, 1.0*inch, 1.4*inch, 1.8*inch])
@@ -292,7 +299,6 @@ def generate_result_slip_pdf(student_row, subjects, grade_name, exam_type, term,
     story.append(subject_table)
     story.append(Spacer(1, 12))
 
-    # Summary Totals Block
     mean_score = student_row.get('Mean Score', 0)
     mean_grade = get_letter_grade(mean_score)
     pos = student_row.get('Position', 1)
@@ -318,7 +324,6 @@ def generate_result_slip_pdf(student_row, subjects, grade_name, exam_type, term,
     story.append(summary_table)
     story.append(Spacer(1, 12))
 
-    # Blank Lines for Comments / Signatures
     story.append(Paragraph("Class Teacher's Comment: ____________________________________________________", black_bold))
     story.append(Spacer(1, 14))
     story.append(Paragraph("Principal's Comment: _______________________________________________________", black_bold))
@@ -327,328 +332,8 @@ def generate_result_slip_pdf(student_row, subjects, grade_name, exam_type, term,
     buffer.seek(0)
     return buffer.getvalue()
 
-# ============================================================
-# TITLE & HEADER WITH LOGO
-# ============================================================
 
-st.markdown("<div class='school-header-container'>", unsafe_allow_html=True)
-col_l, col_r = st.columns([1, 4])
-with col_l:
-    if logo_file and os.path.exists(logo_file):
-        st.image(logo_file, width=110)
-with col_r:
-    st.markdown("<div class='school-title'>GONZI GIRLS HIGH SCHOOL</div>", unsafe_allow_html=True)
-    st.markdown("<div class='subtitle'>Student Examination Results Management System</div>", unsafe_allow_html=True)
-st.markdown("</div>", unsafe_allow_html=True)
-
-# ============================================================
-# SIDEBAR SETTINGS
-# ============================================================
-
-st.sidebar.title("⚙️ Results Settings")
-
-exam_type = st.sidebar.text_input("Exam Type", value="End Term Examination")
-
-grade = st.sidebar.selectbox(
-    "Select Grade",
-    ["Grade 9", "Form 3", "Grade 10 STEM", "Grade 10 Social Science", "Grade 11", "Grade 12"]
-)
-
-term = st.sidebar.selectbox(
-    "Select Term",
-    ["Term 1", "Term 2", "Term 3"]
-)
-
-class_teacher = st.sidebar.text_input("Class Teacher", value="Teacher Name")
-
-record_date = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-current_year = datetime.now().strftime("%Y")
-st.sidebar.info(f"📅 Date Recorded: {record_date}")
-
-# ============================================================
-# EDITABLE SUBJECTS
-# ============================================================
-
-st.markdown("## 📚 Editable Subject List")
-
-if "last_grade" not in st.session_state or st.session_state.last_grade != grade:
-    st.session_state.current_subjects_text = ", ".join(DEFAULT_SUBJECT_MAP.get(grade, DEFAULT_SUBJECT_MAP["Grade 9"]))
-    st.session_state.students_df = create_default_table(
-        prepare_subjects(st.session_state.current_subjects_text), grade
-    )
-    st.session_state.last_grade = grade
-
-subjects_text = st.text_area(
-    "Enter subjects separated by commas (Auto-populated for specific grades, editable for all)",
-    value=st.session_state.current_subjects_text,
-    height=100
-)
-
-subjects = prepare_subjects(subjects_text)
-
-if len(subjects) == 0:
-    system_notice("SUB-101", "At least one subject is required.", "error")
-else:
-    st.success(f"Current Subjects: {', '.join(subjects)}")
-
-# ============================================================
-# SUBJECT UPDATE
-# ============================================================
-
-if st.button("🔄 Apply / Update Subject Columns"):
-    st.session_state.current_subjects_text = subjects_text
-    old_df = st.session_state.students_df.copy()
-
-    if "Student ID" not in old_df.columns:
-        old_df["Student ID"] = ""
-
-    if "Student Name" not in old_df.columns:
-        old_df["Student Name"] = ""
-
-    new_df = old_df[["Student ID", "Student Name"]].copy()
-
-    for subject in subjects:
-        if subject in old_df.columns:
-            new_df[subject] = old_df[subject]
-        else:
-            new_df[subject] = 0
-
-    st.session_state.students_df = new_df
-    st.success("Subject columns updated successfully.")
-    st.rerun()
-
-# ============================================================
-# STUDENT MARKS ENTRY
-# ============================================================
-
-st.markdown("## 📝 Student Marks Entry Dashboard")
-
-st.warning(
-    "Edit names and marks in the table. Student IDs are unique primary keys. "
-    "Similar student names are allowed if the Student IDs are different."
-)
-
-col_add, col_note = st.columns([1, 3])
-
-with col_add:
-    if st.button("➕ Add New Student"):
-        current_df = st.session_state.students_df.copy()
-        new_id = get_next_student_id(current_df, grade)
-
-        new_row = {
-            "Student ID": new_id,
-            "Student Name": ""
-        }
-
-        for subject in subjects:
-            new_row[subject] = 0
-
-        st.session_state.students_df = pd.concat(
-            [current_df, pd.DataFrame([new_row])],
-            ignore_index=True
-        )
-
-        st.rerun()
-
-with col_note:
-    st.info("Use the button to add a new row with the next automatic Student ID.")
-
-column_config = {
-    "Student ID": st.column_config.TextColumn(
-        "Student ID",
-        help="Unique student primary key",
-        disabled=True
-    ),
-    "Student Name": st.column_config.TextColumn(
-        "Student Name",
-        help="Enter full student name"
-    )
-}
-
-for subject in subjects:
-    column_config[subject] = st.column_config.NumberColumn(
-        subject,
-        min_value=0,
-        max_value=100,
-        step=1
-    )
-
-edited_df = st.data_editor(
-    st.session_state.students_df,
-    num_rows="fixed",
-    use_container_width=True,
-    column_config=column_config,
-    key="student_editor_table"
-)
-
-st.session_state.students_df = edited_df.copy()
-df = edited_df.copy()
-
-# ============================================================
-# CLEAN AND CALCULATE RESULTS
-# ============================================================
-
-required_columns = ["Student ID", "Student Name"]
-
-for col in required_columns:
-    if col not in df.columns:
-        df[col] = ""
-
-df["Student ID"] = df["Student ID"].astype(str).str.strip()
-df["Student Name"] = df["Student Name"].astype(str).str.strip()
-
-df = df[(df["Student ID"] != "") & (df["Student Name"] != "")]
-
-for subject in subjects:
-    if subject in df.columns:
-        df[subject] = pd.to_numeric(df[subject], errors="coerce").fillna(0)
-        df[subject] = df[subject].clip(lower=0, upper=100)
-    else:
-        df[subject] = 0
-
-duplicate_ids = (
-    df[df["Student ID"].duplicated(keep=False)]["Student ID"]
-    .astype(str)
-    .unique()
-)
-
-has_duplicate_ids = len(duplicate_ids) > 0
-
-if has_duplicate_ids:
-    system_notice(
-        "ID-409",
-        "Repeated Student IDs found. Please correct them before saving or downloading.",
-        "error"
-    )
-
-if len(subjects) > 0:
-    df["Total"] = df[subjects].sum(axis=1)
-    df["Mean Score"] = (df["Total"] / len(subjects)).round(2)
-else:
-    df["Total"] = 0
-    df["Mean Score"] = 0
-
-if not df.empty:
-    df["Position"] = df["Total"].rank(method="min", ascending=False).astype(int)
-    df = df.sort_values(by=["Position", "Student Name"]).reset_index(drop=True)
-else:
-    df["Position"] = []
-
-# ============================================================
-# CLASS SUMMARY
-# ============================================================
-
-st.markdown("## 📊 Class Performance Summary")
-
-total_students = len(df)
-class_mean = round(df["Mean Score"].mean(), 2) if total_students > 0 else 0
-best_student = df.iloc[0]["Student Name"] if total_students > 0 else "N/A"
-best_total = df.iloc[0]["Total"] if total_students > 0 else 0
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Total Students</div>
-        <div class="metric-value">{total_students}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col2:
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Class Mean</div>
-        <div class="metric-value">{class_mean}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col3:
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Best Student</div>
-        <div class="metric-value">{best_student}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col4:
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Best Total</div>
-        <div class="metric-value">{best_total}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# ============================================================
-# FINAL RESULTS TABLE
-# ============================================================
-
-st.markdown("## 🏆 Final Ranked Results")
-st.dataframe(df, use_container_width=True)
-
-# ============================================================
-# SUBJECT PERFORMANCE
-# ============================================================
-
-st.markdown("## 📘 Subject Performance Analysis")
-
-if total_students > 0 and len(subjects) > 0:
-    subject_analysis = pd.DataFrame({
-        "Subject": subjects,
-        "Grand Total": [df[sub].sum() for sub in subjects],
-        "Mean Score": [round(df[sub].mean(), 2) for sub in subjects]
-    })
-
-    subject_analysis["Subject Rank"] = subject_analysis["Mean Score"].rank(
-        method="min",
-        ascending=False
-    ).astype(int)
-
-    subject_analysis = subject_analysis.sort_values(
-        by="Subject Rank"
-    ).reset_index(drop=True)
-else:
-    subject_analysis = pd.DataFrame(
-        columns=["Subject", "Grand Total", "Mean Score", "Subject Rank"]
-    )
-
-st.dataframe(subject_analysis, use_container_width=True)
-
-# ============================================================
-# VISUALIZATION
-# ============================================================
-
-st.markdown("## 📈 Results Visualization Dashboard")
-
-if not subject_analysis.empty:
-    fig_subject = px.bar(
-        subject_analysis,
-        x="Subject",
-        y="Mean Score",
-        text="Mean Score",
-        title="Subject Mean Score Performance"
-    )
-    fig_subject.update_traces(textposition="outside")
-    fig_subject.update_layout(xaxis_tickangle=-45)
-    st.plotly_chart(fig_subject, use_container_width=True)
-
-if not df.empty:
-    fig_students = px.bar(
-        df,
-        x="Student Name",
-        y="Total",
-        text="Position",
-        title="Student Total Marks and Class Positions"
-    )
-    fig_students.update_traces(textposition="outside")
-    fig_students.update_layout(xaxis_tickangle=-45)
-    st.plotly_chart(fig_students, use_container_width=True)
-
-# ============================================================
-# EXCEL & CSV GENERATORS
-# ============================================================
-
-def create_excel_file(df, subject_analysis):
+def create_excel_file(df, subject_analysis, exam_type, grade, term, class_teacher, record_date):
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         workbook = writer.book
@@ -762,7 +447,7 @@ def create_excel_file(df, subject_analysis):
     return output
 
 
-def create_full_csv(df, subject_analysis):
+def create_full_csv(df, subject_analysis, exam_type, grade, term, class_teacher, record_date):
     output = StringIO()
     output.write("GONZI GIRLS HIGH SCHOOL\n")
     output.write("STUDENT EXAMINATION RESULTS SHEET\n")
@@ -777,114 +462,349 @@ def create_full_csv(df, subject_analysis):
     subject_analysis.to_csv(output, index=False)
     return output.getvalue()
 
+# ============================================================
+# TITLE & HEADER WITH LOGO
+# ============================================================
 
-excel_file = create_excel_file(df, subject_analysis)
-csv_file = create_full_csv(df, subject_analysis)
+st.markdown("<div class='school-header-container'>", unsafe_allow_html=True)
+col_l, col_r = st.columns([1, 4])
+with col_l:
+    if logo_file and os.path.exists(logo_file):
+        st.image(logo_file, width=110)
+with col_r:
+    st.markdown("<div class='school-title'>GONZI GIRLS HIGH SCHOOL</div>", unsafe_allow_html=True)
+    st.markdown("<div class='subtitle'>Student Examination Results Management System</div>", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ============================================================
+# SIDEBAR SETTINGS (MULTI-TEACHER ISOLATION)
+# ============================================================
+
+st.sidebar.title("⚙️ Class & Teacher Settings")
+
+class_teacher = st.sidebar.text_input("Class Teacher Name", value="Teacher Name")
+exam_type = st.sidebar.text_input("Exam Type", value="End Term Examination")
+
+grade = st.sidebar.selectbox(
+    "Select Grade",
+    ["Grade 9", "Form 3", "Grade 10 STEM", "Grade 10 Social Science", "Grade 11", "Grade 12"]
+)
+
+term = st.sidebar.selectbox(
+    "Select Term",
+    ["Term 1", "Term 2", "Term 3"]
+)
+
+record_date = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+current_year = datetime.now().strftime("%Y")
+st.sidebar.info(f"📅 Date Recorded: {record_date}")
+
+# Key namespace per user session instance
+session_key = clean_filename(f"{class_teacher}_{grade}_{exam_type}_{term}")
+
+# Organized directory structure
+class_dir = os.path.join(
+    BASE_SAVE_FOLDER,
+    clean_filename(grade),
+    clean_filename(exam_type),
+    clean_filename(class_teacher)
+)
+os.makedirs(class_dir, exist_ok=True)
+
+# ============================================================
+# EDITABLE SUBJECTS
+# ============================================================
+
+st.markdown("## 📚 Editable Subject List")
+
+if f"subjects_{session_key}" not in st.session_state:
+    st.session_state[f"subjects_{session_key}"] = ", ".join(DEFAULT_SUBJECT_MAP.get(grade, DEFAULT_SUBJECT_MAP["Grade 9"]))
+
+if f"df_{session_key}" not in st.session_state:
+    st.session_state[f"df_{session_key}"] = create_default_table(
+        prepare_subjects(st.session_state[f"subjects_{session_key}"]), grade
+    )
+
+subjects_text = st.text_area(
+    f"Subjects for {grade} ({class_teacher})",
+    value=st.session_state[f"subjects_{session_key}"],
+    height=80
+)
+
+subjects = prepare_subjects(subjects_text)
+
+if len(subjects) == 0:
+    system_notice("SUB-101", "At least one subject is required.", "error")
+else:
+    st.success(f"Current Subjects Active: {', '.join(subjects)}")
+
+if st.button("🔄 Apply / Update Subject Columns"):
+    st.session_state[f"subjects_{session_key}"] = subjects_text
+    old_df = st.session_state[f"df_{session_key}"].copy()
+
+    if "Student ID" not in old_df.columns:
+        old_df["Student ID"] = ""
+    if "Student Name" not in old_df.columns:
+        old_df["Student Name"] = ""
+
+    new_df = old_df[["Student ID", "Student Name"]].copy()
+
+    for subject in subjects:
+        if subject in old_df.columns:
+            new_df[subject] = old_df[subject]
+        else:
+            new_df[subject] = 0
+
+    st.session_state[f"df_{session_key}"] = new_df
+    st.success("Subject columns updated successfully.")
+    st.rerun()
+
+# ============================================================
+# MARKS ENTRY DASHBOARD
+# ============================================================
+
+st.markdown("## 📝 Marks Entry Workspace")
+
+col_add, col_note = st.columns([1, 3])
+
+with col_add:
+    if st.button("➕ Add New Student"):
+        current_df = st.session_state[f"df_{session_key}"].copy()
+        new_id = get_next_student_id(current_df, grade)
+
+        new_row = {"Student ID": new_id, "Student Name": ""}
+        for subject in subjects:
+            new_row[subject] = 0
+
+        st.session_state[f"df_{session_key}"] = pd.concat(
+            [current_df, pd.DataFrame([new_row])],
+            ignore_index=True
+        )
+        st.rerun()
+
+with col_note:
+    st.info(f"Currently managing class register for: **{grade}** | Teacher: **{class_teacher}**")
+
+column_config = {
+    "Student ID": st.column_config.TextColumn("Student ID", disabled=True),
+    "Student Name": st.column_config.TextColumn("Student Name")
+}
+
+for subject in subjects:
+    column_config[subject] = st.column_config.NumberColumn(
+        subject, min_value=0, max_value=100, step=1
+    )
+
+edited_df = st.data_editor(
+    st.session_state[f"df_{session_key}"],
+    num_rows="fixed",
+    use_container_width=True,
+    column_config=column_config,
+    key=f"editor_{session_key}"
+)
+
+st.session_state[f"df_{session_key}"] = edited_df.copy()
+df = edited_df.copy()
+
+# ============================================================
+# CALCULATE RESULTS
+# ============================================================
+
+required_columns = ["Student ID", "Student Name"]
+for col in required_columns:
+    if col not in df.columns:
+        df[col] = ""
+
+df["Student ID"] = df["Student ID"].astype(str).str.strip()
+df["Student Name"] = df["Student Name"].astype(str).str.strip()
+
+df = df[(df["Student ID"] != "") & (df["Student Name"] != "")]
+
+for subject in subjects:
+    if subject in df.columns:
+        df[subject] = pd.to_numeric(df[subject], errors="coerce").fillna(0)
+        df[subject] = df[subject].clip(lower=0, upper=100)
+    else:
+        df[subject] = 0
+
+duplicate_ids = df[df["Student ID"].duplicated(keep=False)]["Student ID"].unique()
+has_duplicate_ids = len(duplicate_ids) > 0
+
+if has_duplicate_ids:
+    system_notice("ID-409", "Duplicate Student IDs detected. Correct before saving or exporting.", "error")
+
+if len(subjects) > 0:
+    df["Total"] = df[subjects].sum(axis=1)
+    df["Mean Score"] = (df["Total"] / len(subjects)).round(2)
+else:
+    df["Total"] = 0
+    df["Mean Score"] = 0
+
+if not df.empty:
+    df["Position"] = df["Total"].rank(method="min", ascending=False).astype(int)
+    df = df.sort_values(by=["Position", "Student Name"]).reset_index(drop=True)
+else:
+    df["Position"] = []
+
+# Subject Analysis DataFrame
+if len(df) > 0 and len(subjects) > 0:
+    subject_analysis = pd.DataFrame({
+        "Subject": subjects,
+        "Grand Total": [df[sub].sum() for sub in subjects],
+        "Mean Score": [round(df[sub].mean(), 2) for sub in subjects]
+    })
+    subject_analysis["Subject Rank"] = subject_analysis["Mean Score"].rank(method="min", ascending=False).astype(int)
+    subject_analysis = subject_analysis.sort_values(by="Subject Rank").reset_index(drop=True)
+else:
+    subject_analysis = pd.DataFrame(columns=["Subject", "Grand Total", "Mean Score", "Subject Rank"])
+
+# Excel & CSV Exports
+excel_file = create_excel_file(df, subject_analysis, exam_type, grade, term, class_teacher, record_date)
+csv_file = create_full_csv(df, subject_analysis, exam_type, grade, term, class_teacher, record_date)
 
 file_base_name = clean_filename(f"{grade}_{term}_{exam_type}_Results")
 excel_filename = f"{file_base_name}.xlsx"
 csv_filename = f"{file_base_name}.csv"
 
 # ============================================================
-# DOWNLOAD AND SAVE SECTION
+# DASHBOARD TABS
 # ============================================================
 
-st.markdown("## 📥 Download Results Sheet")
+tab_summary, tab_charts, tab_slips, tab_exports = st.tabs([
+    "📊 Class Performance & Tables",
+    "📈 Analytics Dashboard",
+    "📄 Result Slips Center",
+    "📥 Downloads & File Storage"
+])
 
-if has_duplicate_ids:
-    system_notice(
-        "SAVE-409",
-        "Download and saving are locked until repeated Student IDs are corrected.",
-        "warning"
-    )
-else:
-    st.download_button(
-        label="📥 Download Decorated Excel Results Sheet",
-        data=excel_file,
-        file_name=excel_filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+with tab_summary:
+    total_students = len(df)
+    class_mean = round(df["Mean Score"].mean(), 2) if total_students > 0 else 0
+    best_student = df.iloc[0]["Student Name"] if total_students > 0 else "N/A"
+    best_total = df.iloc[0]["Total"] if total_students > 0 else 0
 
-    st.download_button(
-        label="📄 Download Full CSV Results",
-        data=csv_file,
-        file_name=csv_filename,
-        mime="text/csv"
-    )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(f"<div class='metric-card'><div class='metric-title'>Total Students</div><div class='metric-value'>{total_students}</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='metric-card'><div class='metric-title'>Class Mean</div><div class='metric-value'>{class_mean}</div></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='metric-card'><div class='metric-title'>Top Student</div><div class='metric-value'>{best_student}</div></div>", unsafe_allow_html=True)
+    c4.markdown(f"<div class='metric-card'><div class='metric-title'>Top Score</div><div class='metric-value'>{best_total}</div></div>", unsafe_allow_html=True)
 
-    if st.button("💾 Save Excel and CSV for Future Reference"):
-        excel_path = os.path.join(SAVE_FOLDER, excel_filename)
-        csv_path = os.path.join(SAVE_FOLDER, csv_filename)
+    st.markdown("### 🏆 Final Ranked Results")
+    st.dataframe(df, use_container_width=True)
 
-        with open(excel_path, "wb") as f:
-            f.write(excel_file.getvalue())
+    st.markdown("### 📘 Subject Performance Analysis")
+    st.dataframe(subject_analysis, use_container_width=True)
 
-        with open(csv_path, "w", encoding="utf-8") as f:
-            f.write(csv_file)
+with tab_charts:
+    st.markdown("### 📈 Visual Analytics Dashboard")
+    if not subject_analysis.empty:
+        fig_sub = px.bar(
+            subject_analysis, x="Subject", y="Mean Score", text="Mean Score",
+            title="Subject Mean Score Performance Analysis", color="Mean Score",
+            color_continuous_scale="Blues"
+        )
+        fig_sub.update_traces(textposition="outside")
+        st.plotly_chart(fig_sub, use_container_width=True)
 
-        st.success("Files saved successfully for future reference.")
+    if not df.empty:
+        fig_st = px.bar(
+            df, x="Student Name", y="Total", text="Position",
+            title="Student Total Marks & Class Positions", color="Total",
+            color_continuous_scale="Tealgrn"
+        )
+        fig_st.update_traces(textposition="outside")
+        st.plotly_chart(fig_st, use_container_width=True)
 
-# ============================================================
-# INDIVIDUAL STUDENT RESULT SLIPS SECTION
-# ============================================================
+with tab_slips:
+    st.markdown("### 📄 Result Slips Center")
+    if df.empty:
+        st.info("No students registered to generate result slips.")
+    else:
+        col_s, col_b = st.columns(2)
+        with col_s:
+            st.markdown("#### Individual Student Result Slip")
+            selected_id = st.selectbox(
+                "Select Student",
+                options=df["Student ID"].tolist(),
+                format_func=lambda sid: f"{sid} - {df[df['Student ID'] == sid]['Student Name'].values[0]}"
+            )
+            s_row = df[df["Student ID"] == selected_id].iloc[0]
+            
+            single_pdf = generate_result_slip_pdf(
+                s_row, subjects, grade, exam_type, term, class_teacher, current_year, len(df), logo_file
+            )
+            st.download_button(
+                label=f"🖨️ Download Result Slip for {s_row['Student Name']}",
+                data=single_pdf,
+                file_name=clean_filename(f"Result_Slip_{s_row['Student ID']}_{s_row['Student Name']}.pdf"),
+                mime="application/pdf"
+            )
 
-st.markdown("## 📄 Student Result Slips Generator")
+        with col_b:
+            st.markdown("#### Batch Result Slips (ZIP)")
+            st.write("Download all result slips for this class together in a single ZIP file.")
+            if st.button("📦 Generate Batch ZIP"):
+                zip_buffer = BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_f:
+                    for _, row in df.iterrows():
+                        pdf_data = generate_result_slip_pdf(
+                            row, subjects, grade, exam_type, term, class_teacher, current_year, len(df), logo_file
+                        )
+                        zip_f.writestr(clean_filename(f"{row['Student ID']}_{row['Student Name']}.pdf"), pdf_data)
+                
+                zip_buffer.seek(0)
+                st.download_button(
+                    label="📥 Download All Slips (ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name=clean_filename(f"Batch_Slips_{grade}_{exam_type}.zip"),
+                    mime="application/zip"
+                )
 
-if df.empty:
-    st.info("No students registered to generate result slips.")
-else:
-    selected_student_id = st.selectbox(
-        "Select Student for Result Slip",
-        options=df["Student ID"].tolist(),
-        format_func=lambda sid: f"{sid} - {df[df['Student ID'] == sid]['Student Name'].values[0]}"
-    )
-
-    student_row = df[df["Student ID"] == selected_student_id].iloc[0]
-
-    pdf_bytes = generate_result_slip_pdf(
-        student_row=student_row,
-        subjects=subjects,
-        grade_name=grade,
-        exam_type=exam_type,
-        term=term,
-        class_teacher=class_teacher,
-        year=current_year,
-        total_students=len(df),
-        logo_path=logo_file
-    )
-
-    st.download_button(
-        label=f"🖨️ Download Result Slip for {student_row['Student Name']}",
-        data=pdf_bytes,
-        file_name=clean_filename(f"Result_Slip_{student_row['Student ID']}_{student_row['Student Name']}.pdf"),
-        mime="application/pdf"
-    )
-
-# ============================================================
-# SAVED FILES MANAGER
-# ============================================================
-
-st.markdown("## 🗂️ Saved Reports Manager")
-
-saved_files = sorted(os.listdir(SAVE_FOLDER))
-
-if len(saved_files) == 0:
-    st.info("No saved reports yet.")
-else:
-    selected_file = st.selectbox("Select saved file", saved_files)
-    selected_path = os.path.join(SAVE_FOLDER, selected_file)
-
-    with open(selected_path, "rb") as f:
+with tab_exports:
+    st.markdown("### 📥 Download Reports & Manage Storage")
+    
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
         st.download_button(
-            label="⬇️ Download Selected Saved File",
-            data=f.read(),
-            file_name=selected_file
+            label="📥 Download Excel Results Sheet",
+            data=excel_file,
+            file_name=excel_filename,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    with col_d2:
+        st.download_button(
+            label="📄 Download Full CSV File",
+            data=csv_file,
+            file_name=csv_filename,
+            mime="text/csv"
         )
 
-    if st.button("🗑️ Delete Selected Saved File"):
-        os.remove(selected_path)
-        st.success(f"{selected_file} deleted successfully.")
-        st.rerun()
+    st.markdown("---")
+    st.markdown(f"#### Save Records to Hierarchy Folder (`{class_dir}`)")
+    if st.button("💾 Save All Class Records & Slips to Folder"):
+        pdf_folder = os.path.join(class_dir, "Result_Slips")
+        os.makedirs(pdf_folder, exist_ok=True)
+        
+        for _, row in df.iterrows():
+            pdf_bytes = generate_result_slip_pdf(
+                row, subjects, grade, exam_type, term, class_teacher, current_year, len(df), logo_file
+            )
+            with open(os.path.join(pdf_folder, clean_filename(f"{row['Student ID']}_{row['Student Name']}.pdf")), "wb") as f:
+                f.write(pdf_bytes)
+
+        with open(os.path.join(class_dir, excel_filename), "wb") as f:
+            f.write(excel_file.getvalue())
+
+        st.success(f"Successfully archived class report and PDF slips in folder:\n`{class_dir}`")
+
+    st.markdown("---")
+    st.markdown("#### Folder Content Browser")
+    files_in_dir = sorted(os.listdir(class_dir))
+    if files_in_dir:
+        for f in files_in_dir:
+            st.text(f"📁 {f}" if os.path.isdir(os.path.join(class_dir, f)) else f"📄 {f}")
+    else:
+        st.info("No saved records in this directory yet.")
 
 # ============================================================
 # FOOTER
@@ -894,6 +814,6 @@ st.markdown("""
 <hr>
 <center>
 <b>Gonzi Girls High School Results System</b><br>
-Designed for accurate ranking, subject analysis, clean academic reporting, and future record keeping.
+Designed for multi-teacher isolation, dynamic folder structure, and complete academic reporting.
 </center>
 """, unsafe_allow_html=True)
